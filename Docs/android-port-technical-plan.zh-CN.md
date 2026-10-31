@@ -1,6 +1,6 @@
-# Remodex iOS → Android 技术方案
+# 码舟（CodeArk）：Remodex iOS → Android 技术方案
 
-日期：2026-10-31。代码基线：上游快照 `f67b149`；本分支已在 `7a9668c` 移除 iOS 订阅限制。本文是待实施方案，不表示 Android 客户端已经完成。
+日期：2026-10-31，已纳入用户关于完整首版、自用分发、通知接口和业务对齐的确认。代码基线：上游快照 `f67b149`；本分支已在 `7a9668c` 移除 iOS 订阅限制。本文是待实施方案，不表示 Android 客户端已经完成。
 
 ## 1. 实施结论与边界
 
@@ -8,7 +8,28 @@
 
 保留现有 Mac bridge、Codex/OpenCode 本地运行、Relay 密文转发的架构，Android 只替换 iOS 客户端。SwiftUI 不能逐文件机械转译为 XML：协议、状态机、消息合并规则移植为 Kotlin；视图依据同一交互规格重写。服务器不执行用户的 Codex、Git 或工作区命令。
 
-交付目标为无付费墙、无消息次数上限的自托管客户端。模型服务自己的认证和额度仍由电脑上的 Codex/OpenCode 管理。扫描二维码取得 Relay 地址，不在源码中固定生产地址。首期先完成可靠聊天闭环，终端、语音和后台推送分阶段补齐；最终功能对齐范围见下表。
+交付目标为无付费墙、无消息次数上限的自托管客户端。模型服务自己的认证和额度仍由电脑上的 Codex/OpenCode 管理。扫描二维码取得 Relay 地址，不在源码中固定生产地址。首版一次性交付全部功能，包括 SSH 终端、语音、宠物、小组件和快捷方式；后台消息通知是用户明确指定的例外，仅预留接口，不实现通道。开发可以分阶段，但不能把内部阶段当作缩减首版范围的依据。
+
+### 1.1 已确定的产品决策（2026-10-31）
+
+| 项目 | 执行约束 |
+|---|---|
+| 首版范围 | 完整移植去除订阅后的 iOS 客户端功能；不采用精简 MVP，不将终端、语音、宠物或小组件延期到第二版 |
+| 使用与分发 | 仅用户自己安装；交付使用固定私有签名密钥签名的 APK，支持后续覆盖升级，不做商店发布、运营账户或商业订阅 |
+| 后台消息通知 | 只定义事件、通道能力、注册/注销和通知路由接口；不实现 FCM、厂商、自托管或其他具体通道，等待用户后续指定方案 |
+| 业务行为 | 以去除付费限制后的 iOS 实际实现为基准，前置条件、操作时机、RPC 参数、状态变化、结果与失败恢复均需对齐 |
+| UI | XML + ConstraintLayout 优先，禁止 Compose；尽量保持 iOS 的视觉与交互层级，允许系统组件替换 |
+| 名称和图标 | 采用下节的“码舟（CodeArk）”及代码帆船图标方向 |
+
+“仅自行安装”是 APK 的分发约束，不改变此前代码提交到当前 GitHub 仓库的授权。签名密钥、口令和个人配置不提交仓库；本次只确定交付方式，尚未创建 APK 签名密钥。
+
+### 1.2 名称与图标设计
+
+应用显示名确定为 **码舟**，英文名 **CodeArk**：手机像一艘小舟，连接电脑上的编码工作区。名称用于本次个人安装版本，不作商标独占性声明。
+
+图标采用原创的“代码帆船”：深海蓝底 `#101C2C`，青绿色 `#55D6BE` 的简化船身与右三角帆，帆内一道白色短横象征终端光标；船身两端的斜切形成抽象代码括号。保持平面矢量、少量粗线条、不加文字、不依赖渐变或细小细节，缩小后仍能识别。
+
+Android 实施时提供 adaptive icon 的前景/背景层、单色 themed icon 和旧版 mipmap；关键形状置于安全区域，不在素材中预先画死外框圆角。应用图标不使用上游 Remodex 标志。这里只确定设计规格，成品图标资源随 Android 工程一并交付。
 
 ## 2. 已核实的工程事实与移植位置
 
@@ -31,7 +52,7 @@
 | `Services/CodexService+Voice.swift`、`GPTVoiceTranscriptionManager.swift` | 语音服务与转写 | 录音适配器、bridge 语音协议适配；单独验证认证链路 |
 | `Models/AppFont.swift`、`Views/Turn/Composer/TurnComposerView.swift` | 字体策略、输入卡片尺寸与状态 | typography/dimens/color XML 资源、输入面板布局与状态切换 |
 | `relay/relay.js`、`relay/server.js` | iphone/android 路由、单个活动移动端、可信重连 HTTP 接口 | 首期原样复用；Android 以 `x-role: android` 接入 |
-| `relay/push-service.js`、`relay/apns-client.js` | 可选 APNs 推送，默认关闭 | 不能直接支持 Android 离线推送，后续增加 provider 层 |
+| `relay/push-service.js`、`relay/apns-client.js` | 可选 APNs 推送，默认关闭 | 不能直接支持 Android 离线推送；首版仅预留可替换通道接口 |
 | `phodex-bridge/src/secure-transport.js`、`relay/simulated-pairing-reconnect.test.js` | 协议另一端及配对/重连集成测试 | 互操作测试的基准实现 |
 
 ## 3. Android 架构和目录
@@ -45,13 +66,14 @@ AndroidMobile/
   core/transport/              OkHttp WebSocket/HTTP、心跳、连接代际
   core/storage/                加密缓存、可信设备、草稿、偏好
   core/ui/                     XML 样式、共用 View、图标、Markdown
+  core/notification-api/       后台通知契约，无具体通道实现
   feature/pairing/              引导、扫码、手动配对、设备管理
   feature/conversation/         时间线、输入器、审批、计划、运行控制
   feature/sidebar/              项目/会话树、搜索、归档
   feature/git/                  分支、diff、提交、工作树
   feature/settings/             外观、连接、通知、运行时设置
-  feature/terminal/             SSH 与终端（后续阶段）
-  feature/voice/                录音、转写（后续阶段）
+  feature/terminal/             SSH 与终端（首版必交付）
+  feature/voice/                录音、转写（首版必交付）
 ```
 
 先按上述边界建包，待编译时间或团队协作需要时再拆 Gradle module，避免初期几十个空 module。`core/protocol` 和 reducer 不依赖 Android View，便于在 JVM 上做协议回归。
@@ -97,8 +119,8 @@ flowchart LR
 | 危险 Git 操作 | MaterialAlertDialogBuilder | 保留清晰确认和服务端错误；不可把撤回与重置混为一个操作 |
 | 相册/文件/分享 | Android Photo Picker、SAF、Sharesheet | 使用平台原生组件；不需要复刻 iOS 系统弹框 |
 | 终端 | ConstraintLayout + 原生 TerminalView + 快捷键条 | 支持选择复制、IME、Ctrl/Esc/Tab、PTY resize，见终端章节 |
-| 宠物/装饰动画 | XML 容器中的自定义 View / AnimatedImageDrawable | 后续阶段适配，不阻塞核心会话；不引入 Compose |
-| 小组件/动态岛类状态 | RemoteViews 小组件、标准通知、应用内状态条 | 使用 Android 对等能力，不承诺复制 iOS 系统级浮岛 |
+| 宠物/装饰动画 | XML 容器中的自定义 View / AnimatedImageDrawable | 首版完成交互与状态适配；不引入 Compose |
+| 小组件/动态岛类状态 | RemoteViews 小组件、应用内状态条；后台通知仅接口 | 首版保留任务状态和打开会话行为；系统级浮岛改为 Android 对等呈现，不借此实现后台通知 |
 
 ConstraintLayout 用于扁平约束布局；DrawerLayout、RecyclerView、CoordinatorLayout 属于功能容器，不为“所有根都相同”而增加无效嵌套。[ConstraintLayout 官方说明](https://developer.android.com/develop/ui/views/layout/constraint-layout)。
 
@@ -233,13 +255,25 @@ CameraX PreviewView 承载相机，选用不依赖 Google Play 服务的本地�
 
 语音分为录音采集、转写和语音会话三层。首先移植目前 bridge 可用的语音 RPC；原有 GPT 登录/回调及 iOS 特有音频会话不能直接复制，必须核对当前启用路径。设备无相应账户或服务能力时显示不可用原因。不要把系统语音识别静默替换为项目原有转写服务；如作为备用入口，应明确标识。
 
-### 7.3 后台与通知
+### 7.3 后台与通知：接口保留，通道不实现
 
-Android 后台执行限制决定不能承诺应用退到后台后 WebSocket 永远存活。首期方案：前台实时连接，后台保存进度，回前台恢复并回放。正在运行的 Codex 留在电脑继续执行。[Android 后台限制说明](https://developer.android.com/develop/background-work/background-tasks/bg-work-restrictions)。
+Android 后台执行限制决定不能承诺应用退到后台后 WebSocket 永远存活。前台实时连接，后台保存进度，回前台恢复并回放；正在运行的 Codex 留在电脑继续执行。该连接恢复能力属于首版必需功能，不属于被排除的通知通道。[Android 后台限制说明](https://developer.android.com/develop/background-work/background-tasks/bg-work-restrictions)。
 
-现有服务器推送只连接 APNs，不能把 Android token 传进去即获得通知。本次 Relay 部署保持 push 关闭。后续将 push 抽成 provider 接口：国际版可接 FCM，国内环境再评估厂商推送/可选自托管通道；每条注册绑定已认证 session/设备，凭证只在服务端。推送只携带必要唤醒/线程标识，不带聊天正文。无推送版本应明确仅保证应用内提醒和返回应用后同步。
+用户将来会指定特殊消息通知方案，首版不选择或接入任何通知供应商，不实现后台通知发送、远端设备注册或推送接收服务，不增加通知专用后台保活/轮询。本次 Relay 继续保持 push 关闭；现有 APNs 代码不改造成 Android 推送服务。应用内任务完成、需要审批等提示仍按 iOS 行为实现。
 
-持续连接前台服务只在确有用户可见的长连接用途且符合对应系统版本要求时引入；不能用 WorkManager 做常驻 socket 或用定时保活绕过系统限制。Android 通知、桌面快捷方式、分享入口采用原生能力，iOS ActivityKit/WidgetKit 不直接移植。
+预留以下纯接口和数据契约，独立于 FCM token、APNs token 和厂商 SDK：
+
+| 契约 | 职责与约束 |
+|---|---|
+| `TaskNotificationEvent` | `eventId / type / macDeviceId / threadId / turnId? / occurredAt`；类型覆盖任务完成、失败、需要审批/输入；不包含聊天正文、私钥或配对凭证 |
+| `NotificationChannelPort` | 声明通道能力查询、绑定与解绑、接入事件的方法；实现由后续方案注入，不能让聊天 repository 直接依赖通道 SDK |
+| `NotificationBinding` | 以通道类型、设备作用域和不透明引用描述绑定；避免把协议固定为某家 push token，敏感注册凭证不进入普通日志 |
+| `NotificationOpenRequest` / `NotificationRouter` | 规范事件去重、目标设备/线程定位、等待连接恢复后打开会话的契约；跳转前沿用已有可信设备校验，不从通知建立新信任 |
+| `NotificationCapability` | 明确表示 `NotIntegrated`、可用或暂不可用；未集成时不能显示“已开启/已注册/已发送成功” |
+
+首版只保留上述边界、应用内领域事件以及与现有会话导航的接入位置，不提供生产通道实现。无通道注入时消费方应明确识别 NotIntegrated，不发网络请求、不申请通知专用权限；测试替身仅用于契约测试，不随生产包冒充真实通道。前台业务处理不能因没有通知通道失败、卡住或重复发请求。
+
+桌面快捷方式、小组件和分享入口仍在首版实现。小组件显示已同步的任务状态并打开对应会话；后台新事件的到达依赖未来通知方案，不能宣称具备尚未实现的离线通知或持续刷新。不能用 WorkManager 常驻 socket 或定时保活来替代被排除的通知通道。
 
 ### 7.4 SSH 终端
 
@@ -247,20 +281,45 @@ Android 后台执行限制决定不能承诺应用退到后台后 WebSocket 永�
 
 SSH 传输可用 Apache MINA SSHD 作为 PoC 候选，但其 Java 支持不等于已证明 Android 兼容，需在 minSdk、R8 release、密钥格式和 PTY 交互下验证。终端渲染需要支持 VT/ANSI、宽字符、颜色、alternate screen、鼠标/选择、IME 与窗口 resize；不能用普通滚动 TextView 冒充完整终端。[Apache MINA SSHD 官方说明](https://mina.apache.org/sshd-project/)。
 
-iOS 的 GhosttyKit xcframework 不能直接链接到 Android。阶段 0 对可再分发的原生终端引擎做许可与 Android NDK 构建 PoC，产出 ADR 后锁定；若无满足条件的引擎，终端单独延期，主聊天不受影响。终端自定义 View 放在 XML 中，不使用 Compose 或 WebView 代替全应用。
+iOS 的 GhosttyKit xcframework 不能直接链接到 Android。阶段 0 对可再分发的原生终端引擎做许可与 Android NDK 构建 PoC，产出 ADR 后锁定；若候选引擎不可用，继续更换或适配引擎并重估整体工期；终端仍是首版交付门槛，不能以隐藏入口或后续补齐视为完成。终端自定义 View 放在 XML 中，不使用 Compose 或 WebView 代替全应用。
 
-## 8. 分阶段交付与验收
+## 8. 首版完整交付与内部实施顺序
 
-工作量为基于当前代码规模的初步估算，单位为工程人周，不是已承诺日历排期；包含 Android 实现与基础测试，不含应用商店审核、苹果签名等待或新模型服务开发。
+下面仅规定开发顺序，不代表多个版本或可删减范围。首个正式交付 APK 必须完成全部阶段，唯一功能例外是后台通知通道仅保留接口。内部调试包用于检查进展，不能标记为“首版完成”。
 
-| 阶段 | 估算 | 可审查交付物 | 通过条件 |
-|---|---:|---|---|
-| 0：协议与 UI 基线 | 1–2 人周 | 协议 DTO、Node/Kotlin golden vectors、关键 iOS 截图、终端/crypto ADR | Android 原型与现有 bridge 加密互通；sender/nonce/key 编码一致 |
-| 1：连接和聊天闭环 | 3–4 人周 | XML 工程、扫码/短码、可信重连、会话列表、纯文本/Markdown 流式聊天、停止/草稿/错误 | 无付费配置也可连续发送超过 5 次；切网络、重启客户端不丢信任与历史 |
-| 2：完整编码工作流 | 3–5 人周 | 工具时间线、审批、plan/subagents、队列/steer、附件、Git/diff/worktree、设置、多设备切换 | 关键场景与 iOS 行为和视觉对齐；不重复发送/显示消息 |
-| 3：平台增强与交付 | 2–4 人周 | SSH、语音、可选推送、小组件/快捷方式、宠物、性能与发布构建 | 每个能力有真机验证；未支持项在界面明确隐藏或标记 |
+| 内部阶段 | 必须产出的内容 | 完成条件 |
+|---|---|---|
+| 0：全量盘点与基线 | iOS 全部可达业务入口清单、状态/RPC 对照、关键截图、Node/Kotlin golden vectors、终端/crypto ADR | 逐项记录来源与验收用例；冻结作为对齐依据的 iOS commit |
+| 1：连接和聊天闭环 | XML 工程、扫码/短码、可信重连、会话列表、流式聊天、停止/草稿/错误恢复 | 协议互通、切网恢复、进程重启、无付费上限等用例通过 |
+| 2：完整编码工作流 | 工具时间线、审批、plan/subagents、队列/steer、附件、Git/diff/worktree、设置、多设备切换；其他盘点出的现有业务入口 | 每个入口的输入条件、请求语义、状态和结果与 iOS 一致 |
+| 3：完整平台能力 | SSH 终端、语音、宠物、小组件、快捷方式、分享、应用内提醒；后台通知接口 | 所有首版功能实机可用；通知通道无实现且不会产生虚假成功状态 |
+| 4：统一验收与个人安装 | 业务差异清零、视觉/性能检查、码舟图标资源、签名 release APK、覆盖升级验证 | 全量对齐清单关闭，用户可安装与升级，签名材料保持私有 |
 
-核心可用版本约 7–11 人周，完整增强约 9–15 人周。若终端引擎或国内推送需额外移植，应在阶段 0 后重估，不把不确定性藏在 UI 工期中。可以先完成一个真实会话的纵向闭环，再扩展其余页面。
+原方案的 9–15 工程人周仅是盘点前的粗估，不能用来缩减本次确定的完整范围。阶段 0 后依据全部功能和终端适配结果重估工期；外部依赖造成阻碍时明确记录，不能把未完成项标为“已隐藏，因此已完成”。不包含应用商店发布或后台通知通道开发。
+
+### 8.1 业务行为对齐是硬性验收要求
+
+对齐对象是**本仓库已经去除付费限制后的 iOS 实际业务行为**，不是只对照 README 功能列表或页面截图。阶段 0 固定具体 commit；实施中若 iOS 更新，先检查差异再决定基线升级，避免两端边做边漂移。
+
+每个业务入口建立可追踪条目：`功能 → iOS 源码/方法 → 前置状态 → 用户动作 → RPC 方法/参数 → 状态变化 → 成功/失败/取消结果 → Android 实现 → 验收证据`。不要求 Swift/Kotlin 的代码结构一致；要求相同输入和服务端事件得到等价业务结果。平台生命周期和系统控件允许适配，但不允许自行删减操作、改变权限或调整执行语义。
+
+| 行为域 | 必须对齐的内容与关键反例 |
+|---|---|
+| 配对/设备切换 | QR/短码校验、信任保存、重连优先级、密钥变化处理；不能临时断网就清除信任或串用其他设备历史 |
+| 会话管理 | 新建、打开、命名、搜索、置顶、归档/恢复、分叉、项目/工作树路由；不能只保留聊天列表而省略管理动作 |
+| 消息发送 | 首次发送创建线程、附件与 mention 校验、权限/模型参数、失败草稿恢复；不能用另一种 RPC 获得“看起来相同”的结果 |
+| 执行控制 | 运行态、缺失 turnId 的停止回退、steer、队列暂停/恢复/取消、流失败续接；不能把继续误做成创建新线程或重复发送 |
+| 时间线与历史 | item 粒度合并、晚到推理、工具/计划/子代理、审批/输入状态、回放去重、分页锚点；不能压平消息或错序 |
+| 运行时能力 | Codex/OpenCode、模型/variant、推理强度、fast/plan、技能/插件、目标及其他现有控制；按服务端能力展示，不能凭 UI 写死参数 |
+| 审批与输入 | On-Request/Full access、自动审批审查、结构化问题、允许/拒绝/取消/超时；不能因 Android 原生弹框不同而改变授权范围 |
+| Git/工作区 | diff、提交/推送/拉取、分支/工作树、stash/reset、预览/应用撤回、桌面 handoff 等现有动作；执行地点、确认与错误处理一致 |
+| SSH/语音 | 连接配置、主机指纹、PTY/快捷键/复制、录音取消/失败/重试、转写与会话结果；不以简化终端或不同转写服务替代 |
+| 偏好与扩展 | 设置项、草稿/历史持久化、宠物、快捷方式、小组件的动作与状态；平台呈现可替换，业务意图和作用对象不变 |
+| 通知例外 | 应用内提示与返回后恢复对齐；后台消息通知通道不实现，只有契约，不伪装在线/已投递 |
+
+该表是验收分类，不是对未盘点代码的功能完整性声明。所有源码盘点发现的可达业务均补入清单，不能因为未出现在表中就排除。已关闭的实验分支/不可达旧代码单独标明，不作为活跃功能实现。
+
+默认差异仅限：用户要求的无付费限制、后台通知接口化、个人安装和新品牌，以及已经明确允许的 Android 原生系统呈现。若发现 iOS 行为疑似缺陷或平台无法等价实现，说明具体差异和影响后由用户决定是否接受；不能自行“优化”成另一套业务规则。
 
 ## 9. 测试矩阵与发布门槛
 
@@ -272,7 +331,7 @@ UI 使用 XML View 的 Espresso/截图测试，至少覆盖手机小屏、常见
 
 性能目标作为验收预算而非现成测量结果：普通聊天滚动主线程大部分帧在 16.7ms 内；1,000 条混合消息不一次 inflate 全部 item；长代码/图片历史不触发 OOM；连续流式输出 30 分钟无持续内存增长。通过 Macrobenchmark/Perfetto 与实际低端设备确定最终阈值。
 
-发布门槛：无 Compose 依赖；主页面/列表项有 XML 资源；协议与 reducer 测试通过；release R8 包安装可运行；公网 WSS 实机配对成功；关键截图人工签收；许可证清单完整。应用名称、图标和品牌按仓库说明为衍生版本另行确定。
+发布门槛：无 Compose 依赖；主页面/列表项有 XML 资源；协议与 reducer 测试通过；release R8 包安装可运行；公网 WSS 实机配对成功；关键截图人工签收；许可证清单完整。应用名称及图标按“码舟（CodeArk）”规格交付；全量业务对齐清单逐项验收，包括 SSH、语音、宠物和小组件，不接受占位入口。通知接口契约测试验证未接入状态、事件作用域、无通道副作用与路由数据约束；不要求被明确排除的后台投递功能通过。个人安装还需验证固定签名 APK 覆盖升级后的配对、历史和配置保留。
 
 ## 10. 本次工作与后续实施的分界
 
