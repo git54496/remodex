@@ -1,6 +1,6 @@
 # 码舟（CodeArk）：Remodex iOS → Android 技术方案
 
-日期：2026-10-31，已纳入用户最新确认：语音、宠物、小组件延期；其余首版范围、自用分发、通知接口和业务对齐要求保持。代码基线：上游快照 `f67b149`；本分支已在 `7a9668c` 移除 iOS 订阅限制。本文是待实施方案，不表示 Android 客户端已经完成。
+日期：2026-10-31，已纳入用户最新确认：语音、宠物、小组件延期；跳过跨版本/跨设备兼容性测试，只验收当前连接手机；其余首版范围、自用分发、通知接口和业务对齐要求保持。代码基线：上游快照 `f67b149`；本分支已在 `7a9668c` 移除 iOS 订阅限制。本文是待实施方案，不表示 Android 客户端已经完成。
 
 ## 1. 实施结论与边界
 
@@ -20,6 +20,7 @@
 | 业务行为 | 以去除付费限制后的 iOS 实际实现为基准，前置条件、操作时机、RPC 参数、状态变化、结果与失败恢复均需对齐 |
 | UI | XML + ConstraintLayout 优先，禁止 Compose；尽量保持 iOS 的视觉与交互层级，允许系统组件替换 |
 | 名称和图标 | 采用下节的“码舟（CodeArk）”及代码帆船图标方向 |
+| 设备验收范围 | 只要求当前连接手机正常运行；不做最低版本、无 GMS、其他厂商机型或屏幕形态的兼容性专项测试 |
 
 “仅自行安装”是 APK 的分发约束，不改变此前代码提交到当前 GitHub 仓库的授权。签名密钥、口令和个人配置不提交仓库；本次只确定交付方式，尚未创建 APK 签名密钥。
 
@@ -32,6 +33,14 @@
 - 台账对应项标记为“用户明确延期”，从首版完成率分母中排除，不标记为已完成。与主流程共用的代码仍需常规回归，不因延期跳过整个工程的构建检查。
 - 应用内任务状态、完成/审批提示、聊天恢复、SSH、快捷方式、分享等没有延期。后台通知继续只保留接口，不实现具体通道。
 - 其余待讨论的延期建议尚未批准，不自动改变范围；所有保留在首版的业务继续与去付费后的 iOS 行为对齐。
+
+### 1.1.2 当前手机验收替代兼容性矩阵
+
+用户明确要求跳过兼容性测试，以当前连接手机可正常运行为准。此前目标为 vivo V2254A / Android 16，执行设备测试前核实实际连接目标；未经确认不改用其他设备代表验收。
+
+停止为 Android 8.0/API 26、其他系统版本、无 GMS、其他厂商、平板/折叠屏开展兼容性专项准备和测试，不再以这些项目未验证阻塞首版交付。已下载镜像、已有兼容代码和历史测试结果可保留，无需为本次调整修改 minSdk 或删除代码；不宣称未测试环境已经支持或验证通过。
+
+当前手机上的业务功能、与现有 bridge 的协议互通、iOS 行为对齐、中文输入、权限、前后台/进程恢复、实际签名 R8 release 包安装运行及覆盖升级后数据保留仍属验收范围。模拟器或内部验证包的测试记录不能代替该手机上的最终签名 APK 检查。只调整跨环境验收范围，不关闭回归测试或取消主流程稳定性要求。
 
 ### 1.2 名称与图标设计
 
@@ -104,7 +113,7 @@ flowchart LR
 
 一个应用级连接管理器持有当前设备连接，不由每个 Fragment 单独建 WebSocket。`viewLifecycleOwner` 只收集 UI State；Fragment 销毁不等于删除设备或终止电脑任务。RPC、解密、磁盘和 Markdown 解析不占主线程，事件在有序协程队列中处理。
 
-建议初始 `minSdk = 26`，降低旧系统加密、字体、后台兼容成本；这只是产品覆盖决策。compile/target SDK、AGP、Kotlin 和依赖版本在开工时核对最新稳定版与发布渠道要求后锁定于 version catalog，不使用动态 `+` 版本。开启 ViewBinding，关闭 Compose。ViewModel 可跨配置变化保留页面状态，但进程死亡后仍需从磁盘恢复，不把它当持久化数据库。[ViewBinding 官方说明](https://developer.android.com/topic/libraries/view-binding)、[ViewModel 官方说明](https://developer.android.com/topic/libraries/architecture/viewmodel)。
+工程初始 `minSdk = 26` 可保持，不因验收范围调整而主动修改；这不构成最低版本已验证的声明。验收仅针对当前连接手机，不安排低版本兼容性测试。compile/target SDK、AGP、Kotlin 和依赖版本在开工时核对最新稳定版与发布渠道要求后锁定于 version catalog，不使用动态 `+` 版本。开启 ViewBinding，关闭 Compose。ViewModel 可跨配置变化保留页面状态，但进程死亡后仍需从磁盘恢复，不把它当持久化数据库。[ViewBinding 官方说明](https://developer.android.com/topic/libraries/view-binding)、[ViewModel 官方说明](https://developer.android.com/topic/libraries/architecture/viewmodel)。
 
 ## 4. XML 页面与 iOS 视觉对应
 
@@ -216,7 +225,7 @@ Android WebSocket 使用 `/relay/{sessionId}` 和 `x-role: android`。同一房�
 7. `lastAppliedBridgeOutboundSeq` 是应用回放进度，不能与加密 counter 混用。结合 `bridgeReplayEpoch` 处理电脑进程重启后的序号重置；只有应用事件成功合入后才推进 watermark。
 8. trusted resolve 请求的 `nonce / timestamp / signature` 使用独立签名 transcript，成功响应必须再次检查 macDeviceId 和 identity key 与本地信任记录相符。
 
-建议将 Bouncy Castle lightweight API 作为 Ed25519/X25519/HKDF 的首个验证候选，避免替换系统全局加密 Provider；Android JCA 处理 AES-GCM。正式锁版本前在 minSdk 真机和 JVM 上验证原始 key 编码、算法可用性、包体积和依赖冲突。自定义的是协议字节拼装，不自己实现密码算法。[Bouncy Castle 官方文档](https://www.bouncycastle.org/documentation/documentation-java/)。
+建议将 Bouncy Castle lightweight API 作为 Ed25519/X25519/HKDF 的首个验证候选，避免替换系统全局加密 Provider；Android JCA 处理 AES-GCM。正式锁版本前在当前连接手机和 JVM 上验证原始 key 编码、算法可用性、包体积和依赖冲突。自定义的是协议字节拼装，不自己实现密码算法。[Bouncy Castle 官方文档](https://www.bouncycastle.org/documentation/documentation-java/)。
 
 ### 5.3 连接状态与 JSON-RPC
 
@@ -289,7 +298,7 @@ Android 后台执行限制决定不能承诺应用退到后台后 WebSocket 永�
 
 当前终端是手机直接 SSH 电脑，和 Relay 聊天是两条链路。配置页保留 host/port/user/private key/passphrase；首次连接展示 host key 指纹，变更时阻止并要求重新确认，不能接受所有 host key。
 
-SSH 传输可用 Apache MINA SSHD 作为 PoC 候选，但其 Java 支持不等于已证明 Android 兼容，需在 minSdk、R8 release、密钥格式和 PTY 交互下验证。终端渲染需要支持 VT/ANSI、宽字符、颜色、alternate screen、鼠标/选择、IME 与窗口 resize；不能用普通滚动 TextView 冒充完整终端。[Apache MINA SSHD 官方说明](https://mina.apache.org/sshd-project/)。
+SSH 传输可用 Apache MINA SSHD 作为 PoC 候选，但其 Java 支持不等于已证明 Android 兼容，需在当前连接手机上验证 R8 release、密钥格式和 PTY 交互。终端渲染需要支持 VT/ANSI、宽字符、颜色、alternate screen、鼠标/选择、IME 与窗口 resize；不能用普通滚动 TextView 冒充完整终端。[Apache MINA SSHD 官方说明](https://mina.apache.org/sshd-project/)。
 
 iOS 的 GhosttyKit xcframework 不能直接链接到 Android。阶段 0 对可再分发的原生终端引擎做许可与 Android NDK 构建 PoC，产出 ADR 后锁定；若候选引擎不可用，继续更换或适配引擎并重估整体工期；终端仍是首版交付门槛，不能以隐藏入口或后续补齐视为完成。终端自定义 View 放在 XML 中，不使用 Compose 或 WebView 代替全应用。
 
@@ -331,17 +340,17 @@ iOS 的 GhosttyKit xcframework 不能直接链接到 Android。阶段 0 对可�
 
 默认差异仅限：用户要求的无付费限制、后台通知接口化、语音/宠物/小组件延期、个人安装和新品牌，以及已经明确允许的 Android 原生系统呈现。若发现 iOS 行为疑似缺陷或平台无法等价实现，说明具体差异和影响后由用户决定是否接受；不能自行“优化”成另一套业务规则。
 
-## 9. 测试矩阵与发布门槛
+## 9. 当前手机测试与发布门槛
 
 协议测试首先覆盖 Node↔Kotlin 的 transcript、签名、KDF、双向密文、错误 tag、过期 QR、nonce 重放、旧 keyEpoch、重复 counter、bridge 进程重启、replay buffer 截断与 watermark 恢复。复用现有 `phodex-bridge/test/secure-transport.test.js`、`relay/simulated-pairing-reconnect.test.js` 的场景，不能只测 Android 自己加密再自己解密。
 
 reducer 固定录制脱敏事件序列：缺失 turnId、多个 assistant item、晚到 reasoning、历史与流同时到达、用户输入审批、subagent、断线恢复与 stop。验证最终状态和消息数量/顺序，而不是测试某个实现方法被调用几次。
 
-UI 使用 XML View 的 Espresso/截图测试，至少覆盖手机小屏、常见大屏、平板/折叠窗口；真机覆盖最低支持版本、当前稳定版，以及至少一种无 Google Play 服务的国内设备。验证中文 IME、多行输入、输入中旋转、权限拒绝、暗色、字体缩放、TalkBack、后台进程被杀。
+UI 使用 XML View 的 Espresso/截图测试，并在当前连接手机上验证中文 IME、多行输入、实际使用方向、权限拒绝、暗色、必要可访问性以及后台进程被杀后的恢复。不开展最低支持版本、无 GMS、其他机型或平板/折叠窗口等兼容性矩阵；本段按用户最新决定替代旧版跨设备测试要求。
 
-性能目标作为验收预算而非现成测量结果：普通聊天滚动主线程大部分帧在 16.7ms 内；1,000 条混合消息不一次 inflate 全部 item；长代码/图片历史不触发 OOM；连续流式输出 30 分钟无持续内存增长。通过 Macrobenchmark/Perfetto 与实际低端设备确定最终阈值。
+性能目标作为验收预算而非现成测量结果：普通聊天滚动主线程大部分帧在 16.7ms 内；1,000 条混合消息不一次 inflate 全部 item；长代码/图片历史不触发 OOM；连续流式输出 30 分钟无持续内存增长。通过当前连接手机的实际测量确定最终阈值，不额外寻找低端设备做兼容性或性能矩阵。
 
-发布门槛：无 Compose 依赖；主页面/列表项有 XML 资源；协议与 reducer 测试通过；release R8 包安装可运行；公网 WSS 实机配对成功；关键截图人工签收；许可证清单完整。应用名称及图标按“码舟（CodeArk）”规格交付；调整后的首版业务对齐清单逐项验收，包括 SSH；首版范围内不接受占位入口。语音、宠物、小组件标注为延期，不要求完成功能或专项验收；已有代码必须不影响工程编译与主流程。通知接口契约测试验证未接入状态、事件作用域、无通道副作用与路由数据约束；不要求被明确排除的后台投递功能通过。个人安装还需验证固定签名 APK 覆盖升级后的配对、历史和配置保留。
+发布门槛：无 Compose 依赖；主页面/列表项有 XML 资源；协议与 reducer 测试通过；实际私有签名 release R8 包在当前连接手机安装可运行；公网 WSS 在该手机配对成功；关键截图人工签收；许可证清单完整。应用名称及图标按“码舟（CodeArk）”规格交付；调整后的首版业务对齐清单逐项验收，包括 SSH；首版范围内不接受占位入口。语音、宠物、小组件标注为延期，不要求完成功能或专项验收；已有代码必须不影响工程编译与主流程。通知接口契约测试验证未接入状态、事件作用域、无通道副作用与路由数据约束；不要求被明确排除的后台投递功能通过。个人安装还需验证固定签名 APK 覆盖升级后的配对、历史和配置保留。
 
 ## 10. 本次工作与后续实施的分界
 
